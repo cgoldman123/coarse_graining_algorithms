@@ -269,7 +269,7 @@ def QfunctionSimple(G, J, U, V, lam, y, latents):
         # update the cost
         #C1 += 0.5 * torch.sum(dx * torch.matmul(P_process, dx) * Weights.unsqueeze(1))
         #C2 += 0.5 * torch.sum(dr * torch.matmul(P_obs, dr) * Weights.unsqueeze(1))
-        C += torch.sum(dx)
+        C += torch.sum(torch.abs(dx))
     # Add the L1 norms of G and J
     #C = C1 + C2
     return C

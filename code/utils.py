@@ -56,6 +56,57 @@ def JMatToVec(JMat):
 	return JVec
 
 
+
+def JMatToVec_symm_noself(JMat):
+    """
+    Convert symmetric matrix with zero diagonal to a vector of upper-triangular off-diagonal elements.
+    
+    Args:
+        JMat: np.ndarray of shape (Nx, Nx), symmetric with zeros on diagonal
+    
+    Returns:
+        JVec: np.ndarray of shape (Nx*(Nx-1)/2,)
+    """
+    Nx = JMat.shape[0]
+    idx = np.triu_indices(Nx, k=1)  # upper triangle without diagonal
+    JVec = JMat[idx]
+    return JVec
+
+def JVecToMat_symm_noself(JVec, Nx):
+    """
+    Convert vector of upper-triangular off-diagonal elements to full symmetric matrix with zero diagonal.
+    
+    Args:
+        JVec: np.ndarray of shape (Nx*(Nx-1)/2,)
+        Nx: int, size of the full matrix
+    
+    Returns:
+        JMat: np.ndarray of shape (Nx, Nx), symmetric with zeros on diagonal
+    """
+    JMat = np.zeros((Nx, Nx), dtype=JVec.dtype)
+    idx = np.triu_indices(Nx, k=1)
+    JMat[idx] = JVec
+    JMat[(idx[1], idx[0])] = JVec  # enforce symmetry
+    return JMat
+
+def JVecToMat_symm_noself_torch(JVec, Nx):
+    """
+    Convert vector of upper-triangular off-diagonal elements to full symmetric matrix with zero diagonal.
+    
+    Args:
+        JVec: torch.Tensor of shape (Nx*(Nx-1)/2,)
+        Nx: int, size of the full matrix
+    
+    Returns:
+        JMat: torch.Tensor of shape (Nx, Nx), symmetric with zeros on diagonal
+    """
+    JMat = torch.zeros(Nx, Nx, device=JVec.device, dtype=JVec.dtype)
+    idx = torch.triu_indices(Nx, Nx, offset=1)
+    JMat[idx[0], idx[1]] = JVec
+    JMat[idx[1], idx[0]] = JVec  # enforce symmetry
+    return JMat
+
+
 def extractParams(theta, lG, Nx, Nh, Nr):
 	# extract the parameters
 	# carter changed np.int -> int

@@ -99,7 +99,7 @@ def runTAP(x0, yMat, Qpr, Qobs, theta, nltype,kernel,stride):
 	J2   = J**2
 
 	# Interesting that the input is constantly applied; they don't wait until convergence
-	for t in range(1,T-1):  
+	for t in range(1,T):  
 		
 		y       = yMat[...,t-1].T # y should have shape Ny x B
 
@@ -215,7 +215,7 @@ def generate_input_binary(B, Ny, T):
     # repeat across T
     return np.repeat(base[:, :, None], T, axis=2)
 
-def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG_high,kernel,stride,TAP_func=runSamplingTAP):
+def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG_high,kernel,stride,TAP_func=runTAP):
 	
 	"""
 	Function that generates the TAP dynamics
@@ -245,11 +245,20 @@ def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG
 
 	# Generate binary input!
 	#y = generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high)
-	y = generate_input_binary(B, Ny, T)
+	y = generate_input_binary(B, Ny, T-1)
+	#observations = np.random.rand(B, Ny,T-1) # between 0 and 1
+	#observations = np.random.beta(2, 9, size=(B, Ny))
+	#observations = 2*(observations - 0.5)  # between -1 and 1
+	#observations = np.random.beta(2, 9, size=(B, Ny))
+	#y = np.expand_dims(observations, axis=2) * np.ones((1,1,T-1))
+	#y = observations
 
-	# Binary initial latent probs!
-	#x0 	= np.random.rand(Ns,B) 								# initial values of x
-	x0 = np.random.randint(0, 2, size=(Ns, B))		
+	# Use binary initial latent probabilities if running the sampling algorithm
+	if TAP_func ==runSamplingTAP:
+		x0 = np.random.randint(0, 2, size=(Ns, B))	
+	else:
+		x0 	= np.random.rand(Ns,B) 								# initial values of x
+
 	x 	= TAP_func(x0, y, Q_process, Q_obs, theta, nltype,kernel,stride) 	# run inputs through TAP dynamics
 
 	r = torch.matmul(torch.tensor(U),torch.tensor(x)).data.numpy()
