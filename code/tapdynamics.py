@@ -183,6 +183,64 @@ def runSamplingTAP(x0, yMat, Qpr, Qobs, theta, nltype,kernel,stride):
 
 	return np.array(xMat).transpose(2,1,0)
 
+def infer_exact_G(y, x, modelparameters, theta):
+	
+	"""
+	Function that infers the TAP global parameters G exactly given the latent dynamics x and inputs y
+
+	Inputs: 
+	y 	  : input signal           - shape B x Ny x T
+	x 	  : latent dynamics        - shape B x Ns x T
+	modelparameters 
+	theta : parameters of the TAP dynamics
+
+	Outputs: 
+	G_est  : inferred global parameters of TAP dynamics
+	"""
+
+	B  = y.shape[0] 		# no. of batches 
+	Ny = y.shape[1] 		# no. of input dimensions
+	T  = y.shape[2] 		# no. of time steps
+	Ns = modelparameters['Ns']  		# no. of latent dimensions
+
+	lam, G, J, U, V = extractParams(theta, 18, Ns, Ny, modelparameters['Nr']) # G has 18 parameters for now
+
+	# Invert sigmoid function
+	inverted_x = np.log(x / (1 - x))
+
+	first_x = x[:, :, 0]
+
+	# Create matrix that operates on G
+	J2      = J**2
+	x2      = first_x**2
+	J1      = np.dot(J,np.ones((Ns,1)))
+	Jx      = np.dot(J,first_x)
+	Jx2     = np.dot(J,x2)
+	J21     = np.dot(J2,np.ones((Ns,1)))
+	J2x     = np.dot(J2,first_x)
+	J2x2    = np.dot(J2,x2)
+    	
+	# Build list of columns (each Ns×1)
+	cols = [
+        J1, Jx, Jx2,         # G[0:3]
+        x * J1, x * Jx, x * Jx2,     # G[3:6]
+        x2 * J1, x2 * Jx, x2 * Jx2   # G[6:9]
+    ]
+
+    # Add J^2 versions (G[9:18])
+	cols += [
+        J21, J2x, J2x2,
+        x * J21, x * J2x, x * J2x2,
+        x2 * J21, x2 * J2x, x2 * J2x2
+    ]
+
+    # Stack all columns horizontally → Ns × 18 matrix
+	phi = np.hstack(cols)
+	argf    =  G[0]*J1 + G[1]*Jx + G[2]*Jx2 + G[9]*J21 + G[10]*J2x + G[11]*J2x2 + x*( G[3]*J1 + G[4]*Jx + G[5]*Jx2 + G[12]*J21 + G[13]*J2x + G[14]*J2x2 ) + x2*(G[6]*J1 + G[7]*Jx + G[8]*Jx2 + G[15]*J21 + G[16]*J2x + G[17]*J2x2)
+	
+	# invert Phi
+	
+
 
 def generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high):
 
