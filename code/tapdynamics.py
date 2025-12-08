@@ -208,7 +208,7 @@ def infer_exact_G(y, x, modelparameters, theta):
 	# Invert sigmoid function
 	inverted_x = np.log(x / (1 - x))
 
-	first_x = x[:, :, 0]
+	first_x = np.transpose(x[:, :, 0])
 
 	# Create matrix that operates on G
 	J2      = J**2
@@ -223,22 +223,24 @@ def infer_exact_G(y, x, modelparameters, theta):
 	# Build list of columns (each Ns×1)
 	cols = [
         J1, Jx, Jx2,         # G[0:3]
-        x * J1, x * Jx, x * Jx2,     # G[3:6]
+        (first_x * J1), (first_x * Jx), (first_x * Jx2),     # G[3:6]
         x2 * J1, x2 * Jx, x2 * Jx2   # G[6:9]
     ]
 
     # Add J^2 versions (G[9:18])
 	cols += [
         J21, J2x, J2x2,
-        x * J21, x * J2x, x * J2x2,
+        first_x * J21, first_x * J2x, first_x * J2x2,
         x2 * J21, x2 * J2x, x2 * J2x2
     ]
 
     # Stack all columns horizontally → Ns × 18 matrix
 	phi = np.hstack(cols)
-	argf    =  G[0]*J1 + G[1]*Jx + G[2]*Jx2 + G[9]*J21 + G[10]*J2x + G[11]*J2x2 + x*( G[3]*J1 + G[4]*Jx + G[5]*Jx2 + G[12]*J21 + G[13]*J2x + G[14]*J2x2 ) + x2*(G[6]*J1 + G[7]*Jx + G[8]*Jx2 + G[15]*J21 + G[16]*J2x + G[17]*J2x2)
 	
-	# invert Phi
+	# Solve for G using latent probs at next timepoint
+	next_x = np.transpose(inverted_x[:,:,1])
+	G_est = np.linalg.solve(phi, next_x)
+
 	
 
 
@@ -302,8 +304,8 @@ def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG
 	U = extractParams(theta, 18, Ns, Ny, Nr)[3] # embedding matrix
 
 	# Generate binary input!
-	#y = generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high)
-	y = generate_input_binary(B, Ny, T-1)
+	y = generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high)
+	#y = generate_input_binary(B, Ny, T-1)
 	#observations = np.random.rand(B, Ny,T-1) # between 0 and 1
 	#observations = np.random.beta(2, 9, size=(B, Ny))
 	#observations = 2*(observations - 0.5)  # between -1 and 1
