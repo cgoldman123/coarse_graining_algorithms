@@ -240,6 +240,7 @@ def infer_exact_G(y, x, modelparameters, theta):
 	# Solve for G using latent probs at next timepoint
 	next_x = np.transpose(inverted_x[:,:,1])
 	G_est = np.linalg.solve(phi, next_x)
+	return G_est.flatten()
 
 	
 
