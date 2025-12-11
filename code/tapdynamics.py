@@ -183,7 +183,7 @@ def runSamplingTAP(x0, yMat, Qpr, Qobs, theta, nltype,kernel,stride):
 
 	return np.array(xMat).transpose(2,1,0)
 
-def infer_exact_G(y, x, modelparameters, theta):
+def infer_exact_G_first_timepoint(y, x, modelparameters, theta):
 	
 	"""
 	Function that infers the TAP global parameters G exactly given the latent dynamics x and inputs y
@@ -207,6 +207,9 @@ def infer_exact_G(y, x, modelparameters, theta):
 
 	# Invert sigmoid function
 	inverted_x = np.log(x / (1 - x))
+	# Handle infinities
+	inverted_x_clipped = np.nan_to_num(inverted_x, posinf=1e6, neginf=-1e6)
+
 
 	first_x = np.transpose(x[:, :, 0])
 
@@ -238,11 +241,102 @@ def infer_exact_G(y, x, modelparameters, theta):
 	phi = np.hstack(cols)
 	
 	# Solve for G using latent probs at next timepoint
-	next_x = np.transpose(inverted_x[:,:,1])
+	next_x = np.transpose(inverted_x_clipped[:,:,1])
 	G_est = np.linalg.solve(phi, next_x)
 	return G_est.flatten()
 
-	
+
+def infer_exact_G_all_timepoints(y, x, modelparameters, theta, ridge=0.0):
+    """
+    Infer TAP coefficients G from all timepoints (and batches) by least-squares regression.
+	Minimizes the L2 norm of the predicted v against the inverted sigmoid of x at next timepoint.
+
+    Inputs:
+      y, x : arrays with shapes
+            y: (B, Ny, T)   -- not used in current linear solve but kept for signature
+            x: (B, Ns, T)
+      modelparameters : dict containing 'Ns' (and other stuff used by extractParams)
+      theta : parameters for extractParams (used to obtain J etc.)
+      ridge : float >=0.0  (L2 regularization lambda)
+
+    Outputs:
+      G_est : (18,) best-fit coefficients
+      info  : dict with keys 'residuals', 'Phi_shape', 'y_shape'
+    """
+    B = x.shape[0]
+    Ns = modelparameters['Ns']
+    T = x.shape[2]
+
+    # extract params (assumes extractParams returns lam,G,J,U,V like your code)
+    lam, G_init, J, U, V = extractParams(theta, 18, Ns, modelparameters['Ny'], modelparameters.get('Nr', None))
+
+    # invert sigmoid (for all batches/time)
+    inverted_x = np.log(x / (1.0 - x))
+    inverted_x_clipped = np.nan_to_num(inverted_x, posinf=1e6, neginf=-1e6)
+
+    # Precompute J^2
+    J2 = J**2
+
+    # We'll collect per-timepoint (and per-batch) phi matrices and targets
+    phi_rows = []   # will hold blocks of shape (Ns, 18)
+    y_rows = []     # will hold (Ns, ) vectors
+
+    for b in range(B):
+        for t in range(T - 1):
+            # first_x is shape (Ns,) for this batch/time
+            first_x = x[b, :, t]          # shape (Ns,)
+            x2 = first_x**2               # shape (Ns,)
+
+            # compute the same features you used before (keep column shapes as (Ns,1) or (Ns,))
+            J1   = np.dot(J, np.ones((Ns,)))      # shape (Ns,)
+            Jx   = np.dot(J, first_x)             # shape (Ns,)
+            Jx2  = np.dot(J, x2)                  # shape (Ns,)
+
+            J21  = np.dot(J2, np.ones((Ns,)))     # shape (Ns,)
+            J2x  = np.dot(J2, first_x)            # shape (Ns,)
+            J2x2 = np.dot(J2, x2)                 # shape (Ns,)
+
+            # Build columns (Ns x 18) - each entry is for a particular neuron index
+            cols = [
+                J1, Jx, Jx2,
+                first_x * J1, first_x * Jx, first_x * Jx2,
+                x2 * J1, x2 * Jx, x2 * Jx2,
+                J21, J2x, J2x2,
+                first_x * J21, first_x * J2x, first_x * J2x2,
+                x2 * J21, x2 * J2x, x2 * J2x2
+            ]
+            # stack into Ns x 18
+            phi_t = np.column_stack(cols)   # shape (Ns, 18)
+
+            # target is inverted sigmoid of x at t+1 for this batch
+            next_x = inverted_x_clipped[b, :, t + 1]  # shape (Ns,)
+
+            phi_rows.append(phi_t)
+            y_rows.append(next_x)
+
+    # Stack across timepoints & batches -> (Ns * B * (T-1), 18)
+    Phi_all = np.vstack(phi_rows)
+    y_all = np.concatenate(y_rows)    # shape (Ns * B * (T-1),)
+
+    # Solve (option A) least squares
+    if ridge is None or ridge == 0.0:
+        G_est, residuals, rank, s = np.linalg.lstsq(Phi_all, y_all, rcond=None)
+    else:
+        # ridge: (Phi^T Phi + lambda I)^{-1} Phi^T y
+        A = Phi_all.T.dot(Phi_all)
+        A += ridge * np.eye(A.shape[0])
+        bvec = Phi_all.T.dot(y_all)
+        G_est = np.linalg.solve(A, bvec)
+        # compute residuals
+        residuals = np.sum((Phi_all.dot(G_est) - y_all)**2)
+
+
+    info = {
+        'residuals': float(residuals) if isinstance(residuals, (np.ndarray,)) and residuals.size != 0 else residuals,
+        'Phi_shape': Phi_all.shape,
+        'y_shape': y_all.shape
+    }
+    return G_est.flatten(), info
 
 
 def generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high):
@@ -276,7 +370,7 @@ def generate_input_binary(B, Ny, T):
     # repeat across T
     return np.repeat(base[:, :, None], T, axis=2)
 
-def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG_high,kernel,stride,TAP_func=runTAP):
+def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG_high,kernel,stride,input=[],initial_x=[],TAP_func=runTAP):
 	
 	"""
 	Function that generates the TAP dynamics
@@ -305,8 +399,11 @@ def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG
 	U = extractParams(theta, 18, Ns, Ny, Nr)[3] # embedding matrix
 
 	# Generate binary input!
-	y = generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high)
-	#y = generate_input_binary(B, Ny, T-1)
+	#y = generate_Input(modelparameters, B, T, T_low, T_high, yG_low, yG_high)
+	if input.size==0:
+		y = generate_input_binary(B, Ny, T-1)
+	else:
+		y = input
 	#observations = np.random.rand(B, Ny,T-1) # between 0 and 1
 	#observations = np.random.beta(2, 9, size=(B, Ny))
 	#observations = 2*(observations - 0.5)  # between -1 and 1
@@ -315,10 +412,13 @@ def generate_TAPdynamics(theta, modelparameters, B, T, T_low, T_high, yG_low, yG
 	#y = observations
 
 	# Use binary initial latent probabilities if running the sampling algorithm
-	if TAP_func ==runSamplingTAP:
-		x0 = np.random.randint(0, 2, size=(Ns, B))	
+	if initial_x.size!=0:
+		x0 = initial_x
 	else:
-		x0 	= np.random.rand(Ns,B) 								# initial values of x
+		if TAP_func ==runSamplingTAP:
+			x0 = np.random.randint(0, 2, size=(Ns, B))	
+		else:
+			x0 	= np.random.rand(Ns,B) 								# initial values of x
 
 	x 	= TAP_func(x0, y, Q_process, Q_obs, theta, nltype,kernel,stride) 	# run inputs through TAP dynamics
 
