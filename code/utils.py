@@ -29,6 +29,9 @@ def nonlinearity(x,nltype):
 	elif nltype == 'sine':
 		y   = np.sin(x)
 		dy  = np.cos(x)
+	elif nltype == 'tanh':
+		y   = np.tanh(x)
+		dy  = 1 - y**2
 	else:
 		print('Nonlinearity unknown')
 		
